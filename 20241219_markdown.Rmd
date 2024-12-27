@@ -1,0 +1,107 @@
+---
+title: "Inference on many jumps in nonparametric panel regression models"
+author: "Chen, Keilbar, Su and Wang"
+date: '2024-12-19'
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This R markdown file accompanies the paper [Inference on many jumps in nonparametric panel regression models](https://arxiv.org/abs/2312.01162) by Chen, Keilbar, Su and Wang (2024). In particular, it illustrates how the R-package `hdthreshold` (available on CRAN) can be used to test for existence of possible threshold effects in high dimensional nonparametric panel regression models. The following empirical example is taken from section 5.1 of the above paper and is concerned with discontinuities in the news impact curve, i.e., in the relationship between volatility and past stock returns.
+
+## Install and load package
+
+As a first step we need to install and load the R package `hdthreshold` from CRAN:
+
+```{r, echo=T, results='hide'}
+#install.packages("hdthreshold")
+library(hdthreshold)
+library(xtable)
+library(rdrobust)
+library(fdrtool)
+library(KernSmooth)
+```
+
+## Read in data and create plots for stock returns and volatility
+
+Read in the data which covers a subset of 12 stocks out of the entire sample of 500 stocks. The data includes the date, the ticker symbol, volatility and the lagged stock return.
+
+```{r}
+data <- read.csv("sp500_subset.csv")[,-1]
+```
+
+To get an overview of the data, plot the time series of stock returns and volatility for the stock of AT&T, adding the empirical 10% and 90% quantiles as dashed lines to the return plot (Same as the Figure 2 in our paper):
+```{r}
+d = data[data$Symbol=="T",]
+x = d$Lag.return
+y = d$Volatility
+
+par(mar=c(2, 2, 0.5, 0.5))
+plot(x~as.Date(d$Date),type="p",xlab="",ylab="",xaxt='n',pch=".")
+axis.Date(1, at=seq(min(as.Date(d$Date)), max(as.Date(d$Date)), by="1 year"), format="%Y")
+abline(h=quantile(x,0.1),lty=5,lwd=2)
+abline(h=quantile(x,0.9),lty=5,lwd=2)
+
+par(mar=c(2, 2, 0.5, 0.5))
+plot(y~as.Date(d$Date),type="l",xlab="",ylab="",xaxt='n',lwd=0.5)
+axis.Date(1, at=seq(min(as.Date(d$Date)), max(as.Date(d$Date)), by="1 year"), format="%Y")
+```
+
+## Model and Test statistic
+
+Consider $Y_{jt}$ as the output variable which is the volatility of firm $j$'s stock at time $t$ in our example with a total of $N=12$ stocks (in this subset of stocks, in general we have $N=499$) and $T_j$ is the number of observations of stock $j$. Variable $X_{jt}$ is an observed covariate which is the lagged stock return in this case.
+$$
+\begin{align*}
+Y_{jt}=&h_{j}(X_{jt})+\tau_{j}(X_{jt})\mathbf{1}_{\{X_{jt}\geq c_{0j}\}}+e_{jt},\\
+\gamma_j=&\tau_j (c_{0j} ),
+\end{align*}
+$$
+where $h_{j}(\cdot)$ and $\tau_j(\cdot)$ are some smooth varying functions, $\gamma_j$ represents the jump at $c_{0j}$ (the unknown break location) and $e_{jt}$'s represent the error terms. Since $c_{0j}$ is not known, we consider a grid of possible threshold locations $[c_1,c_{2},\ldots ,c_K]$ for each individual $j\in \lbrack N]$.
+
+Consider the estimated jump $\widehat{\gamma}_{j}(c_i)$ at candidate location $c_i$ as
+$$\widehat{\gamma}_{j}(c_i)=\sum_{t=1}^{T}w_{jt,b}^{+}(c_i)Y_{jt}-\sum_{t=1}^{T}w_{jt,b}^{-}(c_i)Y_{jt},$$
+where $w_{jt,b}^{+}(c_i)$ and $w_{jt,b}^{-}(c_i)$ are some weights that depend on the covariate $X_{jt}$.
+
+Consider the feasible test statistic:
+$$\widehat{I}^C=\max_{1\leq i\leq K}\max_{1\leq j\leq N}(Tb_{j})^{1/2}|\widehat{\gamma}_{j}(c_i)/\widehat{v}_{j}(c_i)|,$$
+where $\widehat v_{j}(c_i)$ is an estimator for 
+$$v_{j}^{2}(c_i)=(Tb_{j})
+\sum_{t=1}^{T}(w_{jt,b}^{+}(c_i)-w_{jt,b}^{-}(c_i))^{2}\mathrm{Var}\big(e_{jt}|X_{jt}\big).$$
+
+By the results of Theorem 2, we select critical values by taking the $(1-\alpha)$ quantile of the Gaussian random variable $\max_{1\leq k \leq K}\max_{1\leq j\leq N}|Z_{jk}|$ with $Z_{jk}$'s being independent standard normal variables.
+
+
+## Uniform test procedure for existence of threshold effects
+
+We can use the function `threshold.test` to test the existence of threshold effects in the relationship between volatility and lagged stock returns. We have to specify the response variable, the running variable and the id variable (the stock ticker symbol). Further, we specify a grid for possible threshold locations, the bandwidth and a threshold parameter alpha which determines the only stocks that are significant at level alpha are displayed in the resulting output table. 
+
+```{r, echo=T, results='hide'}
+data$Volatility = data$Volatility*100
+test = threshold.test(data=data, response="Volatility", running="Lag.return", id="Symbol", C=c(-0.01,-0.005,0,0.005,0.01), bw=0.026, alternative="two", alpha=0.01)
+```
+
+The output of the function is a list containing the test statistic, the corresponding p-value, the dimension N, the critical values and a table displaying the stocks which have a significant threshold effect at an alpha significance level (Same as Table 1 in our paper).
+
+```{r}
+test
+```
+
+We can also easily export the output of the summary table to latex code:
+
+```{r}
+print(xtable(test$Table,digits=c(0,0,3,3,3,3)),include.rownames=FALSE)
+```
+
+## Visulalization of threshold effects
+
+Finally, we can visualize the estimated threshold effect for AT&T which is significant at 1% level at the location c=0.01. As a comparison, we also plot the effect for Akamai which does not have any significant threshold effects for any threshold locations (Same as Figure 3 in our paper) we consider:
+
+```{R}
+rdplot(y,x,masspoints = "off",kernel="uni",h=0.026,c=0.01,p=1,nbins=c(20,20),x.lim=c(-0.12,0.12),y.lim=c(0,0.06),title="AT&T",x.label="LagReturn",y.label="Volatility")
+
+rdplot(data$Volatility[data$Symbol=="AKAM"]/100,data$Lag.return[data$Symbol=="AKAM"],masspoints = "off",kernel="uni",h=0.026,c=0.01,p=1,nbins=c(20,20),x.lim=c(-0.12,0.12),y.lim=c(0,0.06),title="Akamai",x.label="LagReturn",y.label="Volatility")
+```
